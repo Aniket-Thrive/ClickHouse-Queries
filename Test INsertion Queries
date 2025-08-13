@@ -17,24 +17,25 @@ SELECT DISTINCT
     se.user_id,
     se.signup_timestamp,
     se.user_email,
-    pe.device_id
+    coalesce(pe.device_id, '') AS device_id
 FROM signup_event AS se
-INNER JOIN default.page_events AS pe ON pe.user_id = se.user_id
-WHERE (pe.product_id = se.product_id) AND (pe.environment_id = se.environment_id) AND (pe.device_id != '');
+LEFT JOIN default.page_events AS pe ON pe.user_id = se.user_id
+    AND pe.product_id = se.product_id
+    AND pe.environment_id = se.environment_id
+    AND pe.device_id != '';
 
 2. INSERT INTO default.temp_user_page_visits_sessions
 SELECT
     ud.user_id,
-    count(*) AS total_page_visits,
+    count(pe.timestamp) AS total_page_visits,
     COUNTDistinct(pe.session_id) AS total_sessions
 FROM default.temp_signup_user_devices AS ud
-INNER JOIN default.page_events AS pe ON pe.device_id = ud.device_id
-WHERE
-    (pe.product_id = ud.product_id)
-    AND (pe.environment_id = ud.environment_id)
-    AND (pe.source LIKE '%marketing%')
-    AND (pe.timestamp <= ud.signup_timestamp)
-    AND (pe.session_id != '')
+LEFT JOIN default.page_events AS pe ON pe.device_id = ud.device_id
+    AND pe.product_id = ud.product_id
+    AND pe.environment_id = ud.environment_id
+    AND pe.source LIKE '%marketing%'
+    AND pe.timestamp <= ud.signup_timestamp
+    AND pe.session_id != ''
 GROUP BY ud.user_id;
 
 
@@ -47,21 +48,21 @@ FROM (
         ud.user_id,
         pe.timestamp
     FROM default.temp_signup_user_devices AS ud
-    INNER JOIN default.page_events AS pe ON pe.device_id = ud.device_id
-    WHERE
-        (pe.product_id = ud.product_id)
-        AND (pe.environment_id = ud.environment_id)
-        AND (pe.source LIKE '%marketing%')
-        AND (pe.timestamp <= ud.signup_timestamp)
-
+    LEFT JOIN default.page_events AS pe ON pe.device_id = ud.device_id
+        AND pe.product_id = ud.product_id
+        AND pe.environment_id = ud.environment_id
+        AND pe.source LIKE '%marketing%'
+        AND pe.timestamp <= ud.signup_timestamp
+        
     UNION DISTINCT
-
+    
     SELECT
         ud.user_id,
         ud.signup_timestamp AS timestamp
     FROM default.temp_signup_user_devices AS ud
 ) AS all_user_events
 GROUP BY user_id;
+
 
 
 4. INSERT INTO default.temp_marketing_events_ordered
