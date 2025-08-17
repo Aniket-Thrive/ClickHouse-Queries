@@ -292,29 +292,51 @@ filtered_page_events AS (
     FROM default.page_events
     WHERE device_id != ''
       AND source LIKE '%marketing%'
+),
+-- Add users with marketing activity
+users_with_marketing AS (
+    SELECT
+        se.user_id,
+        se.signup_timestamp,
+        se.user_email,
+        countDistinct(concat(st.session_id, '|', toString(st.touchpoint_group))) AS total_touchpoints,
+        multiIf(
+            (count(st.touchpoint_start) > 0)
+                AND (min(st.touchpoint_start) != toDateTime('1970-01-01 00:00:00')),
+            min(st.touchpoint_start),
+            NULL
+        ) AS first_marketing_event
+    FROM signup_event AS se
+    INNER JOIN default.temp_session_touchpoints AS st
+        ON st.user_id = se.user_id
+    INNER JOIN filtered_page_events AS fpe
+        ON fpe.user_id = se.user_id
+       AND fpe.product_id = se.product_id
+       AND fpe.environment_id = se.environment_id
+    GROUP BY
+        se.user_id,
+        se.signup_timestamp,
+        se.user_email
+),
+-- Add users without marketing activity
+users_without_marketing AS (
+    SELECT
+        se.user_id,
+        se.signup_timestamp,
+        se.user_email,
+        0 AS total_touchpoints,
+        NULL AS first_marketing_event
+    FROM signup_event AS se
+    LEFT JOIN filtered_page_events AS fpe
+        ON fpe.user_id = se.user_id
+       AND fpe.product_id = se.product_id
+       AND fpe.environment_id = se.environment_id
+    WHERE fpe.user_id IS NULL  -- Users with no page_events
 )
-SELECT
-    se.user_id,
-    se.signup_timestamp,
-    se.user_email,
-    countDistinct(concat(st.session_id, '|', toString(st.touchpoint_group))) AS total_touchpoints,
-    multiIf(
-        (count(st.touchpoint_start) > 0)
-            AND (min(st.touchpoint_start) != toDateTime('1970-01-01 00:00:00')),
-        min(st.touchpoint_start),
-        NULL
-    ) AS first_marketing_event
-FROM signup_event AS se
-INNER JOIN default.temp_session_touchpoints AS st
-    ON st.user_id = se.user_id
-INNER JOIN filtered_page_events AS fpe
-    ON fpe.user_id = se.user_id
-   AND fpe.product_id = se.product_id
-   AND fpe.environment_id = se.environment_id
-GROUP BY
-    se.user_id,
-    se.signup_timestamp,
-    se.user_email;
+-- Combine both groups
+SELECT * FROM users_with_marketing
+UNION ALL
+SELECT * FROM users_without_marketing;
 
 
 
@@ -336,13 +358,20 @@ SELECT
     ) AS final_touchpoint_count,
     CAST(
         multiIf(
-            ut.first_marketing_event IS NOT NULL,
+            ut.first_marketing_event IS NOT NULL 
+            AND ut.first_marketing_event != toDateTime('1970-01-01 00:00:00'),
             greatest(0, least(dateDiff('day', ut.first_marketing_event, se.signup_timestamp), 1000)),
             0
         ) AS UInt32
     ) AS time_to_signup_days,
     coalesce(uad.active_days, 1) AS active_days,
-    ut.first_marketing_event AS first_marketing_event,
+    -- Fix the first_marketing_event to handle 1970 dates
+    multiIf(
+        ut.first_marketing_event IS NOT NULL 
+        AND ut.first_marketing_event != toDateTime('1970-01-01 00:00:00'),
+        ut.first_marketing_event,
+        NULL
+    ) AS first_marketing_event,
     coalesce(ut.total_touchpoints, 0) AS total_marketing_touchpoints,
     se.user_email AS user_email,
     multiIf(ut.total_touchpoints > 0, 1, 0) AS has_marketing_activity,
