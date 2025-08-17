@@ -1,272 +1,372 @@
 TouchPoint TEST Multi-Queries for memory Usage-
 
-  1. INSERT INTO default.temp_signup_user_devices
-WITH signup_event AS (
-    SELECT
-        product_id,
-        environment_id,
-        user_id,
-        timestamp AS signup_timestamp,
-        JSONExtractString(traits, 'user_email') AS user_email
-    FROM default.acquisition_events
-    WHERE (type = 'identify') AND (user_id != '')
-)
-SELECT DISTINCT
-    se.product_id,
-    se.environment_id,
-    se.user_id,
-    se.signup_timestamp,
-    se.user_email,
-    coalesce(pe.device_id, '') AS device_id
-FROM signup_event AS se
-LEFT JOIN default.page_events AS pe ON pe.user_id = se.user_id
-    AND pe.product_id = se.product_id
-    AND pe.environment_id = se.environment_id
-    AND pe.device_id != '';
-
-2. INSERT INTO default.temp_user_page_visits_sessions
-SELECT
-    ud.user_id,
-    count(pe.timestamp) AS total_page_visits,
-    COUNTDistinct(pe.session_id) AS total_sessions
-FROM default.temp_signup_user_devices AS ud
-LEFT JOIN default.page_events AS pe ON pe.device_id = ud.device_id
-    AND pe.product_id = ud.product_id
-    AND pe.environment_id = ud.environment_id
-    AND pe.source LIKE '%marketing%'
-    AND pe.timestamp <= ud.signup_timestamp
-    AND pe.session_id != ''
-GROUP BY ud.user_id;
+    1.INSERT INTO default.temp_signup_user_devices
+      WITH
+          signup_event AS (
+              SELECT
+                  product_id,
+                  environment_id,
+                  user_id,
+                  timestamp AS signup_timestamp,
+                  JSONExtractString(traits, 'user_email') AS user_email
+              FROM default.acquisition_events
+              WHERE type = 'identify'
+                AND user_id != ''
+          ),
+          filtered_page_events AS (
+              SELECT
+                  product_id,
+                  environment_id,
+                  user_id,
+                  device_id
+              FROM default.page_events
+              WHERE device_id != ''
+                AND source LIKE '%marketing%'
+          )
+      SELECT DISTINCT
+          se.product_id,
+          se.environment_id,
+          se.user_id,
+          se.signup_timestamp,
+          se.user_email,
+          pe.device_id
+      FROM signup_event AS se
+      LEFT JOIN filtered_page_events AS pe
+          ON pe.user_id = se.user_id
+         AND pe.product_id = se.product_id
+         AND pe.environment_id = se.environment_id;
 
 
-3. INSERT INTO default.temp_user_active_days
-SELECT
-    user_id,
-    COUNTDistinct(toDate(timestamp)) AS active_days
-FROM (
-    SELECT
-        ud.user_id,
-        pe.timestamp
-    FROM default.temp_signup_user_devices AS ud
-    LEFT JOIN default.page_events AS pe ON pe.device_id = ud.device_id
-        AND pe.product_id = ud.product_id
-        AND pe.environment_id = ud.environment_id
-        AND pe.source LIKE '%marketing%'
-        AND pe.timestamp <= ud.signup_timestamp
-        
-    UNION DISTINCT
-    
-    SELECT
-        ud.user_id,
-        ud.signup_timestamp AS timestamp
-    FROM default.temp_signup_user_devices AS ud
-) AS all_user_events
-GROUP BY user_id;
+  2.  INSERT INTO default.temp_user_page_visits_sessions
+      WITH
+          user_filter AS (
+              SELECT DISTINCT user_id, product_id, environment_id, device_id, signup_timestamp
+              FROM default.temp_signup_user_devices
+          ),
+          filtered_page_events AS (
+              SELECT
+                  pe.device_id,
+                  pe.product_id,
+                  pe.environment_id,
+                  pe.session_id,
+                  pe.timestamp
+              FROM default.page_events AS pe
+              WHERE pe.source LIKE '%marketing%'
+                AND pe.session_id != ''
+                AND pe.user_id IN (SELECT user_id FROM user_filter)
+                AND pe.device_id IN (SELECT device_id FROM user_filter)
+                AND (pe.product_id, pe.environment_id) IN (SELECT product_id, environment_id FROM user_filter)
+          )
+      SELECT
+          ud.user_id,
+          count(*) AS total_page_visits,
+          countDistinct(fpe.session_id) AS total_sessions
+      FROM user_filter AS ud
+      INNER JOIN filtered_page_events AS fpe
+          ON fpe.device_id = ud.device_id
+          AND fpe.product_id = ud.product_id
+          AND fpe.environment_id = ud.environment_id
+      WHERE fpe.timestamp <= ud.signup_timestamp
+      GROUP BY ud.user_id;
 
 
-
-4. INSERT INTO default.temp_marketing_events_ordered
-WITH marketing_events AS (
-    SELECT
-        ud.user_id,
-        ud.signup_timestamp,
-        ud.user_email,
-        pe.session_id,
-        pe.timestamp,
-        pe.utm_source,
-        pe.utm_medium,
-        pe.utm_campaign,
-        pe.utm_term,
-        pe.utm_content,
-        multiIf(
-            (pe.utm_source != '') OR (pe.utm_medium != '') OR (pe.utm_campaign != '') OR (pe.utm_term != '') OR (pe.utm_content != ''),
-            concat(
-                coalesce(pe.utm_source, ''),
-                '|',
-                coalesce(pe.utm_medium, ''),
-                '|',
-                coalesce(pe.utm_campaign, ''),
-                '|',
-                coalesce(pe.utm_term, ''),
-                '|',
-                coalesce(pe.utm_content, '')
-            ),
-            ''
-        ) AS utm_signature
-    FROM default.temp_signup_user_devices AS ud
-    INNER JOIN default.page_events AS pe ON pe.device_id = ud.device_id
-    WHERE
-        (pe.product_id = ud.product_id)
-        AND (pe.environment_id = ud.environment_id)
-        AND (pe.source LIKE '%marketing%')
-        AND (pe.session_id != '')
-        AND (pe.timestamp < ud.signup_timestamp)
-),
-ordered_events AS (
-    SELECT
-        user_id,
-        signup_timestamp,
-        user_email,
-        session_id,
-        timestamp,
-        utm_signature,
-        utm_source,
-        utm_medium,
-        utm_campaign,
-        utm_term,
-        utm_content,
-        row_number() OVER (PARTITION BY session_id ORDER BY timestamp ASC) AS event_order
-    FROM marketing_events
-)
-SELECT * FROM ordered_events;
+  3.  INSERT INTO default.temp_user_active_days
+      WITH
+          user_filter AS (
+              SELECT DISTINCT user_id, product_id, environment_id, device_id, signup_timestamp
+              FROM default.temp_signup_user_devices
+          ),
+          filtered_page_events AS (
+              SELECT
+                  pe.device_id,
+                  pe.product_id,
+                  pe.environment_id,
+                  pe.timestamp
+              FROM default.page_events AS pe
+              WHERE pe.source LIKE '%marketing%'
+                AND pe.user_id IN (SELECT user_id FROM user_filter)
+                AND pe.device_id IN (SELECT device_id FROM user_filter)
+                AND (pe.product_id, pe.environment_id) IN (SELECT product_id, environment_id FROM user_filter)
+          )
+      SELECT
+          user_id,
+          countDistinct(toDate(timestamp)) AS active_days
+      FROM (
+          SELECT
+              ud.user_id,
+              fpe.timestamp
+          FROM user_filter AS ud
+          INNER JOIN filtered_page_events AS fpe
+              ON fpe.device_id = ud.device_id
+              AND fpe.product_id = ud.product_id
+              AND fpe.environment_id = ud.environment_id
+          WHERE fpe.timestamp <= ud.signup_timestamp
+          UNION DISTINCT
+          SELECT
+              ud.user_id,
+              ud.signup_timestamp AS timestamp
+          FROM user_filter AS ud
+      ) AS all_user_events
+      GROUP BY user_id;
 
 
-5. INSERT INTO default.temp_touchpoint_groups
-WITH touchpoint_preparation AS (
-    SELECT
-        user_id,
-        signup_timestamp,
-        user_email,
-        session_id,
-        timestamp,
-        utm_signature,
-        utm_source,
-        utm_medium,
-        utm_campaign,
-        utm_term,
-        utm_content,
-        event_order,
-        row_number() OVER (PARTITION BY session_id ORDER BY timestamp ASC) AS rn,
-        multiIf(
-            (utm_signature != '') AND (utm_signature != 'null||||') AND (utm_signature != '||||'),
-            utm_signature,
-            ''
-        ) AS clean_utm_signature,
-        multiIf(
-            (utm_signature != '') AND (utm_signature != 'null||||') AND (utm_signature != '||||'),
-            1,
-            0
-        ) AS has_explicit_utm
-    FROM default.temp_marketing_events_ordered
-),
-touchpoint_with_effective AS (
-    SELECT
-        *,
-        anyLast(multiIf(has_explicit_utm = 1, clean_utm_signature, NULL)) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS last_explicit_utm,
-        multiIf(
-            has_explicit_utm = 1,
-            'explicit',
-            anyLast(multiIf(has_explicit_utm = 1, clean_utm_signature, NULL)) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) IS NOT NULL,
-            'inherited',
-            'direct'
-        ) AS utm_state
-    FROM touchpoint_preparation
-),
-touchpoint_groups AS (
-    SELECT
-        *,
-        coalesce(last_explicit_utm, 'direct') AS effective_touchpoint_signature,
-        anyLast(utm_state) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING) AS prev_utm_state,
-        anyLast(coalesce(last_explicit_utm, 'direct')) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING) AS prev_touchpoint_signature,
-        multiIf(
-            rn = 1,
-            1,
-            coalesce(last_explicit_utm, 'direct')
-                != coalesce(
-                    anyLast(coalesce(last_explicit_utm, 'direct')) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING),
-                    'different'
-                ),
-            1,
-            (utm_state = 'explicit') AND (anyLast(utm_state) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING) = 'inherited'),
-            1,
-            0
-        ) AS is_new_touchpoint
-    FROM touchpoint_with_effective
-)
-SELECT * FROM touchpoint_groups;
+  4.  INSERT INTO default.temp_marketing_events_ordered
+      WITH
+          user_filter AS (
+              SELECT DISTINCT user_id, product_id, environment_id, device_id, signup_timestamp, user_email
+              FROM default.temp_signup_user_devices
+          ),
+          filtered_page_events AS (
+              SELECT
+                  pe.device_id,
+                  pe.product_id,
+                  pe.environment_id,
+                  pe.session_id,
+                  pe.timestamp,
+                  pe.utm_source,
+                  pe.utm_medium,
+                  pe.utm_campaign,
+                  pe.utm_term,
+                  pe.utm_content
+              FROM default.page_events AS pe
+              WHERE pe.source LIKE '%marketing%'
+                AND pe.session_id != ''
+                AND pe.user_id IN (SELECT user_id FROM user_filter)
+                AND pe.device_id IN (SELECT device_id FROM user_filter)
+                AND (pe.product_id, pe.environment_id) IN (SELECT product_id, environment_id FROM user_filter)
+          ),
+          marketing_events AS (
+              SELECT
+                  ud.user_id,
+                  ud.signup_timestamp,
+                  ud.user_email,
+                  fpe.session_id,
+                  fpe.timestamp,
+                  fpe.utm_source,
+                  fpe.utm_medium,
+                  fpe.utm_campaign,
+                  fpe.utm_term,
+                  fpe.utm_content,
+                  multiIf(
+                      (fpe.utm_source != '') OR (fpe.utm_medium != '') OR (fpe.utm_campaign != '') OR (fpe.utm_term != '') OR (fpe.utm_content != ''),
+                      concat(
+                          coalesce(fpe.utm_source, ''),
+                          '|',
+                          coalesce(fpe.utm_medium, ''),
+                          '|',
+                          coalesce(fpe.utm_campaign, ''),
+                          '|',
+                          coalesce(fpe.utm_term, ''),
+                          '|',
+                          coalesce(fpe.utm_content, '')
+                      ),
+                      ''
+                  ) AS utm_signature
+              FROM user_filter AS ud
+              INNER JOIN filtered_page_events AS fpe
+                  ON fpe.device_id = ud.device_id
+                  AND fpe.product_id = ud.product_id
+                  AND fpe.environment_id = ud.environment_id
+              WHERE fpe.timestamp < ud.signup_timestamp
+          ),
+          ordered_events AS (
+              SELECT
+                  user_id,
+                  signup_timestamp,
+                  user_email,
+                  session_id,
+                  timestamp,
+                  utm_signature,
+                  utm_source,
+                  utm_medium,
+                  utm_campaign,
+                  utm_term,
+                  utm_content,
+                  row_number() OVER (PARTITION BY session_id ORDER BY timestamp ASC) AS event_order
+              FROM marketing_events
+          )
+      SELECT * FROM ordered_events;
 
 
-6. INSERT INTO default.temp_session_touchpoints
-WITH touchpoint_numbered AS (
-    SELECT
-        user_id,
-        signup_timestamp,
-        user_email,
-        session_id,
-        timestamp,
-        utm_signature,
-        utm_source,
-        utm_medium,
-        utm_campaign,
-        utm_term,
-        utm_content,
-        event_order,
-        effective_touchpoint_signature,
-        sum(is_new_touchpoint) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS touchpoint_group
-    FROM default.temp_touchpoint_groups
-)
-SELECT
-    user_id,
-    signup_timestamp,
-    user_email,
-    session_id,
-    touchpoint_group,
-    min(timestamp) AS touchpoint_start,
-    max(timestamp) AS touchpoint_end,
-    count(*) AS visit_count,
-    effective_touchpoint_signature AS touchpoint_id
-FROM touchpoint_numbered
-GROUP BY
-    user_id,
-    signup_timestamp,
-    user_email,
-    session_id,
-    touchpoint_group,
-    effective_touchpoint_signature;
+  5.  INSERT INTO default.temp_touchpoint_groups
+      WITH touchpoint_preparation AS (
+          SELECT
+              user_id,
+              signup_timestamp,
+              user_email,
+              session_id,
+              timestamp,
+              utm_signature,
+              utm_source,
+              utm_medium,
+              utm_campaign,
+              utm_term,
+              utm_content,
+              event_order,
+              row_number() OVER (PARTITION BY session_id ORDER BY timestamp ASC) AS rn,
+              multiIf(
+                  (utm_signature != '') AND (utm_signature != 'null||||') AND (utm_signature != '||||'),
+                  utm_signature,
+                  ''
+              ) AS clean_utm_signature,
+              multiIf(
+                  (utm_signature != '') AND (utm_signature != 'null||||') AND (utm_signature != '||||'),
+                  1,
+                  0
+              ) AS has_explicit_utm
+          FROM default.temp_marketing_events_ordered
+      ),
+      touchpoint_with_effective AS (
+          SELECT
+              *,
+              argMax(
+                  clean_utm_signature,
+                  if(has_explicit_utm = 1, timestamp, toDateTime('1970-01-01 00:00:00'))
+              ) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS last_explicit_utm,
+              multiIf(
+                  has_explicit_utm = 1,
+                  'explicit',
+                  argMax(
+                      clean_utm_signature,
+                      if(has_explicit_utm = 1, timestamp, toDateTime('1970-01-01 00:00:00'))
+                  ) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) != '',
+                  'inherited',
+                  'direct'
+              ) AS utm_state
+          FROM touchpoint_preparation
+      ),
+      touchpoint_groups AS (
+          SELECT
+              *,
+              coalesce(last_explicit_utm, 'direct') AS effective_touchpoint_signature,
+              anyLast(utm_state) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING) AS prev_utm_state,
+              anyLast(
+                  coalesce(last_explicit_utm, 'direct')
+              ) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING) AS prev_touchpoint_signature,
+              multiIf(
+                  rn = 1,
+                  1,
+                  coalesce(last_explicit_utm, 'direct') != coalesce(prev_touchpoint_signature, 'different'),
+                  1,
+                  (utm_state = 'explicit') AND (prev_utm_state = 'inherited'),
+                  1,
+                  0
+              ) AS is_new_touchpoint
+          FROM touchpoint_with_effective
+      )
+      SELECT * FROM touchpoint_groups;
 
 
+  6.  INSERT INTO default.temp_session_touchpoints
+      WITH touchpoint_numbered AS (
+          SELECT
+              user_id,
+              signup_timestamp,
+              user_email,
+              session_id,
+              timestamp,
+              utm_signature,
+              utm_source,
+              utm_medium,
+              utm_campaign,
+              utm_term,
+              utm_content,
+              event_order,
+              effective_touchpoint_signature,
+              sum(is_new_touchpoint) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS touchpoint_group
+          FROM default.temp_touchpoint_groups
+      )
+      SELECT
+          user_id,
+          signup_timestamp,
+          user_email,
+          session_id,
+          touchpoint_group,
+          min(timestamp) AS touchpoint_start,
+          max(timestamp) AS touchpoint_end,
+          count(*) AS visit_count,
+          effective_touchpoint_signature AS touchpoint_id
+      FROM touchpoint_numbered
+      GROUP BY
+          user_id,
+          signup_timestamp,
+          user_email,
+          session_id,
+          touchpoint_group,
+          effective_touchpoint_signature;
+      
 
-7. INSERT INTO default.temp_user_touchpoints
-SELECT
-    st.user_id,
-    st.signup_timestamp,
-    st.user_email,
-    countDistinct(concat(st.session_id, '|', toString(st.touchpoint_group))) AS total_touchpoints,
-    multiIf(
-        (count(st.touchpoint_start) > 0)
-            AND (min(st.touchpoint_start) != toDateTime('1970-01-01 00:00:00')),
-        min(st.touchpoint_start),
-        NULL
-    ) AS first_marketing_event
-FROM default.temp_session_touchpoints AS st
-GROUP BY st.user_id, st.signup_timestamp, st.user_email;
+  7.  INSERT INTO default.temp_user_touchpoints
+      WITH
+      signup_event AS (
+          SELECT
+              product_id,
+              environment_id,
+              user_id,
+              timestamp AS signup_timestamp,
+              JSONExtractString(traits, 'user_email') AS user_email
+          FROM default.acquisition_events
+          WHERE type = 'identify'
+            AND user_id != ''
+      ),
+      filtered_page_events AS (
+          SELECT DISTINCT
+              user_id,
+              product_id,
+              environment_id,
+              device_id
+          FROM default.page_events
+          WHERE device_id != ''
+            AND source LIKE '%marketing%'
+      )
+      SELECT
+          se.user_id,
+          se.signup_timestamp,
+          se.user_email,
+          countDistinct(concat(st.session_id, '|', toString(st.touchpoint_group))) AS total_touchpoints,
+          multiIf(
+              (count(st.touchpoint_start) > 0)
+                  AND (min(st.touchpoint_start) != toDateTime('1970-01-01 00:00:00')),
+              min(st.touchpoint_start),
+              NULL
+          ) AS first_marketing_event
+      FROM signup_event AS se
+      INNER JOIN default.temp_session_touchpoints AS st
+          ON st.user_id = se.user_id
+      INNER JOIN filtered_page_events AS fpe
+          ON fpe.user_id = se.user_id
+         AND fpe.product_id = se.product_id
+         AND fpe.environment_id = se.environment_id
+      GROUP BY
+          se.user_id,
+          se.signup_timestamp,
+      se.user_email;
 
 
-
-8. INSERT INTO default.user_conversion_metrics_table
-SELECT
-    se.product_id AS product_id,
-    se.environment_id AS environment_id,
-    se.user_id AS user_id,
-    se.signup_timestamp AS signup_timestamp,
-    se.user_email AS user_email,
-    multiIf(
-        (ut.total_touchpoints IS NOT NULL) AND (ut.total_touchpoints > 0),
-        least(ut.total_touchpoints + 1, 1000),
-        1
-    ) AS final_touchpoint_count,
-    multiIf(
-        ut.first_marketing_event IS NOT NULL,
-        greatest(0, least(dateDiff('day', ut.first_marketing_event, se.signup_timestamp), 1000)),
-        0
-    ) AS time_to_signup_days,
-    coalesce(uad.active_days, 1) AS active_days,
-    ut.first_marketing_event AS first_marketing_event,
-    coalesce(ut.total_touchpoints, 0) AS total_marketing_touchpoints,
-    multiIf(ut.total_touchpoints > 0, 1, 0) AS has_marketing_activity,
-    coalesce(upv.total_page_visits, 0) AS total_page_visits,
-    coalesce(upv.total_sessions, 0) AS total_sessions
-FROM default.temp_signup_user_devices AS se
-LEFT JOIN default.temp_user_touchpoints AS ut ON se.user_id = ut.user_id
-LEFT JOIN default.temp_user_active_days AS uad ON se.user_id = uad.user_id
-LEFT JOIN default.temp_user_page_visits_sessions AS upv ON se.user_id = upv.user_id;
+  8.  INSERT INTO default.user_conversion_metrics_table
+      SELECT
+      se.product_id AS product_id,
+      se.environment_id AS environment_id,
+      se.user_id AS user_id,
+      se.signup_timestamp AS signup_timestamp,
+      multiIf(
+      (ut.total_touchpoints IS NOT NULL) AND (ut.total_touchpoints > 0),
+      least(ut.total_touchpoints + 1, 1000),
+      1
+      ) AS final_touchpoint_count,
+      multiIf(
+      ut.first_marketing_event IS NOT NULL,
+      greatest(0, least(dateDiff('day', ut.first_marketing_event, se.signup_timestamp), 1000)),
+      0
+      ) AS time_to_signup_days,
+      coalesce(uad.active_days, 1) AS active_days,
+      ut.first_marketing_event AS first_marketing_event,
+      coalesce(ut.total_touchpoints, 0) AS total_marketing_touchpoints,
+      se.user_email AS user_email,
+      multiIf(ut.total_touchpoints > 0, 1, 0) AS has_marketing_activity,
+      coalesce(upv.total_page_visits, 0) AS total_page_visits,
+      coalesce(upv.total_sessions, 0) AS total_sessions
+      FROM default.temp_signup_user_devices AS se
+      LEFT JOIN default.temp_user_touchpoints AS ut ON se.user_id = ut.user_id
+      LEFT JOIN default.temp_user_active_days AS uad ON se.user_id = uad.user_id
+      LEFT JOIN default.temp_user_page_visits_sessions AS upv ON se.user_id = upv.user_id;
