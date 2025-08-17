@@ -1,105 +1,116 @@
-Touchpoint Materialised View:
+Tables:-
 
-Temp Tables - 
-      1. CREATE TABLE default.temp_signup_user_devices
-    (
-        product_id String,
-        environment_id String,
-        user_id String,
-        signup_timestamp DateTime64(3, 'UTC'),
-        user_email String,
-        device_id String
-    )
-    ENGINE = MergeTree
-    ORDER BY (user_id);
-    
-    2. CREATE TABLE default.temp_user_page_visits_sessions
-    (
-        user_id String,
-        total_page_visits UInt64,
-        total_sessions UInt64
-    )
-    ENGINE = MergeTree
-    ORDER BY (user_id);
-    
-    3. CREATE TABLE default.temp_user_active_days
-    (
-        user_id String,
-        active_days UInt64
-    )
-    ENGINE = MergeTree
-    ORDER BY (user_id);
-    
-    4. CREATE TABLE default.temp_marketing_events_ordered
-    (
-        user_id String,
-        signup_timestamp DateTime64(3, 'UTC'),
-        user_email String,
-        session_id String,
-        timestamp DateTime64(3, 'UTC'),
-        utm_signature String,
-        utm_source String,
-        utm_medium String,
-        utm_campaign String,
-        utm_term String,
-        utm_content String,
-        event_order UInt64
-    )
-    ENGINE = MergeTree
-    ORDER BY (user_id, session_id, event_order);
-    
-    
-    5.CREATE TABLE default.temp_touchpoint_groups
-    (
-        user_id String,
-        signup_timestamp DateTime64(3, 'UTC'),
-        user_email String,
-        session_id String,
-        timestamp DateTime64(3, 'UTC'),
-        utm_signature String,
-        utm_source String,
-        utm_medium String,
-        utm_campaign String,
-        utm_term String,
-        utm_content String,
-        event_order UInt64,
-        rn UInt64,
-        clean_utm_signature String,
-        has_explicit_utm UInt8,
-        last_explicit_utm String,
-        utm_state String,
-        effective_touchpoint_signature String,
-        prev_utm_state String,
-        prev_touchpoint_signature String,
-        is_new_touchpoint UInt8
-    )
-    ENGINE = MergeTree
-    ORDER BY (user_id, session_id, timestamp);
-    
-    
-    6. CREATE TABLE default.temp_session_touchpoints
-    (
-        user_id String,
-        signup_timestamp DateTime64(3, 'UTC'),
-        user_email String,
-        session_id String,
-        touchpoint_group UInt64,
-        touchpoint_start DateTime64(3, 'UTC'),
-        touchpoint_end DateTime64(3, 'UTC'),
-        visit_count UInt64,
-        touchpoint_id String
-    )
-    ENGINE = MergeTree
-    ORDER BY (user_id, session_id, touchpoint_group);
-    
-    
-    7. CREATE TABLE default.temp_user_touchpoints
-    (
-        user_id String,
-        signup_timestamp DateTime64(3, 'UTC'),
-        user_email String,
-        total_touchpoints UInt64,
-        first_marketing_event Nullable(DateTime64(3, 'UTC'))
-    )
-    ENGINE = MergeTree
-    ORDER BY (user_id);
+1.CREATE TABLE IF NOT EXISTS default.temp_signup_user_devices
+(
+    product_id String,
+    environment_id String,
+    user_id String,
+    signup_timestamp DateTime,
+    user_email String,
+    device_id String
+)
+ENGINE = MergeTree
+ORDER BY (user_id, product_id, environment_id);
+
+
+
+2.CREATE TABLE IF NOT EXISTS default.temp_user_page_visits_sessions
+(
+    user_id String,
+    total_page_visits UInt64,
+    total_sessions UInt64
+)
+ENGINE = SummingMergeTree
+ORDER BY (user_id);
+
+
+
+3.CREATE TABLE IF NOT EXISTS default.temp_user_active_days
+(
+    user_id String,
+    active_days UInt32
+)
+ENGINE = SummingMergeTree
+ORDER BY (user_id);
+
+
+
+4.CREATE TABLE IF NOT EXISTS default.temp_marketing_events_ordered
+(
+    user_id String,
+    signup_timestamp DateTime,
+    user_email String,
+    session_id String,
+    timestamp DateTime,
+    utm_signature String,
+    utm_source String,
+    utm_medium String,
+    utm_campaign String,
+    utm_term String,
+    utm_content String,
+    event_order UInt32
+)
+ENGINE = MergeTree
+ORDER BY (user_id, session_id, timestamp);
+
+
+
+
+5.CREATE TABLE IF NOT EXISTS default.temp_touchpoint_groups
+(
+    user_id String,
+    signup_timestamp DateTime,
+    user_email String,
+    session_id String,
+    timestamp DateTime,
+    utm_signature String,
+    utm_source String,
+    utm_medium String,
+    utm_campaign String,
+    utm_term String,
+    utm_content String,
+    event_order UInt32,
+    rn UInt32,
+    clean_utm_signature String,
+    has_explicit_utm UInt8,
+    last_explicit_utm String,
+    utm_state String,
+    effective_touchpoint_signature String,
+    prev_utm_state String,
+    prev_touchpoint_signature String,
+    is_new_touchpoint UInt8
+)
+ENGINE = MergeTree
+ORDER BY (user_id, session_id, timestamp);
+
+
+
+6.CREATE TABLE IF NOT EXISTS default.temp_session_touchpoints
+(
+    user_id String,
+    signup_timestamp DateTime,
+    user_email String,
+    session_id String,
+    touchpoint_group UInt32,
+    touchpoint_start DateTime,
+    touchpoint_end DateTime,
+    visit_count UInt64,
+    touchpoint_id String
+)
+ENGINE = MergeTree
+ORDER BY (user_id, session_id, touchpoint_group);
+
+
+
+7.CREATE TABLE IF NOT EXISTS default.temp_user_touchpoints
+(
+    user_id String,
+    signup_timestamp DateTime,
+    user_email String,
+    total_touchpoints UInt32,
+    first_marketing_event DateTime
+)
+ENGINE = MergeTree
+ORDER BY (user_id);
+
+
