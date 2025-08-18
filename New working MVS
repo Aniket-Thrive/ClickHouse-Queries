@@ -1,0 +1,363 @@
+New MVS-
+
+1.CREATE MATERIALIZED VIEW default.mv_signup_user_devices TO default.temp_signup_user_devices
+(
+    `product_id` String,
+    `environment_id` String,
+    `user_id` String,
+    `signup_timestamp` DateTime64(3, 'UTC'),
+    `user_email` String,
+    `device_id` String
+)
+AS WITH
+    signup_event AS
+    (
+        SELECT
+            product_id,
+            environment_id,
+            user_id,
+            timestamp AS signup_timestamp,
+            JSONExtractString(traits, 'user_email') AS user_email
+        FROM default.acquisition_events
+        WHERE (type = 'identify') AND (user_id != '')
+    ),
+    filtered_page_events AS
+    (
+        SELECT
+            product_id,
+            environment_id,
+            user_id,
+            device_id
+        FROM default.page_events
+        WHERE (device_id != '') AND (source LIKE '%marketing%')
+    )
+SELECT DISTINCT
+    se.product_id,
+    se.environment_id,
+    se.user_id,
+    se.signup_timestamp,
+    se.user_email,
+    pe.device_id
+FROM signup_event AS se
+LEFT JOIN filtered_page_events AS pe ON (pe.user_id = se.user_id) AND (pe.product_id = se.product_id) AND (pe.environment_id = se.environment_id)
+
+
+2. CREATE MATERIALIZED VIEW default.mv_user_page_visits_sessions TO default.temp_user_page_visits_sessions
+(
+    `user_id` String,
+    `total_page_visits` UInt64,
+    `total_sessions` UInt64
+)
+AS WITH
+    user_filter AS
+    (
+        SELECT DISTINCT
+            user_id,
+            product_id,
+            environment_id,
+            device_id,
+            signup_timestamp
+        FROM default.temp_signup_user_devices
+    ),
+    filtered_page_events AS
+    (
+        SELECT
+            pe.device_id,
+            pe.product_id,
+            pe.environment_id,
+            pe.session_id,
+            pe.timestamp
+        FROM default.page_events AS pe
+        WHERE (pe.source LIKE '%marketing%') AND (pe.session_id != '')
+    )
+SELECT
+    ud.user_id,
+    count() AS total_page_visits,
+    countDistinct(fpe.session_id) AS total_sessions
+FROM user_filter AS ud
+INNER JOIN filtered_page_events AS fpe ON (fpe.device_id = ud.device_id) AND (fpe.product_id = ud.product_id) AND (fpe.environment_id = ud.environment_id)
+WHERE fpe.timestamp <= ud.signup_timestamp
+GROUP BY ud.user_id
+
+
+
+3. CREATE MATERIALIZED VIEW default.mv_user_active_days TO default.temp_user_active_days
+(
+    `user_id` String,
+    `active_days` UInt64
+)
+AS WITH
+    user_filter AS
+    (
+        SELECT DISTINCT
+            user_id,
+            product_id,
+            environment_id,
+            device_id,
+            signup_timestamp
+        FROM default.temp_signup_user_devices
+    ),
+    filtered_page_events AS
+    (
+        SELECT
+            pe.device_id,
+            pe.product_id,
+            pe.environment_id,
+            pe.timestamp
+        FROM default.page_events AS pe
+        WHERE pe.source LIKE '%marketing%'
+    )
+SELECT
+    user_id,
+    countDistinct(toDate(timestamp)) AS active_days
+FROM
+(
+    SELECT
+        ud.user_id,
+        fpe.timestamp
+    FROM user_filter AS ud
+    INNER JOIN filtered_page_events AS fpe ON (fpe.device_id = ud.device_id) AND (fpe.product_id = ud.product_id) AND (fpe.environment_id = ud.environment_id)
+    WHERE fpe.timestamp <= ud.signup_timestamp
+    UNION DISTINCT
+    SELECT
+        ud.user_id,
+        ud.signup_timestamp AS timestamp
+    FROM user_filter AS ud
+) AS all_user_events
+GROUP BY user_id
+
+
+
+4. CREATE MATERIALIZED VIEW default.mv_marketing_events_ordered TO default.temp_marketing_events_ordered
+(
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `user_email` String,
+    `session_id` String,
+    `timestamp` DateTime64(3, 'UTC'),
+    `utm_signature` String,
+    `utm_source` String,
+    `utm_medium` String,
+    `utm_campaign` String,
+    `utm_term` String,
+    `utm_content` String,
+    `event_order` UInt64
+)
+AS WITH
+    user_filter AS
+    (
+        SELECT DISTINCT
+            user_id,
+            product_id,
+            environment_id,
+            device_id,
+            signup_timestamp,
+            user_email
+        FROM default.temp_signup_user_devices
+    ),
+    filtered_page_events AS
+    (
+        SELECT
+            pe.device_id,
+            pe.product_id,
+            pe.environment_id,
+            pe.session_id,
+            pe.timestamp,
+            pe.utm_source,
+            pe.utm_medium,
+            pe.utm_campaign,
+            pe.utm_term,
+            pe.utm_content
+        FROM default.page_events AS pe
+        WHERE (pe.source LIKE '%marketing%') AND (pe.session_id != '')
+    )
+SELECT
+    ud.user_id,
+    ud.signup_timestamp,
+    ud.user_email,
+    fpe.session_id,
+    fpe.timestamp,
+    concat(coalesce(fpe.utm_source, ''), '|', coalesce(fpe.utm_medium, ''), '|', coalesce(fpe.utm_campaign, ''), '|', coalesce(fpe.utm_term, ''), '|', coalesce(fpe.utm_content, '')) AS utm_signature,
+    fpe.utm_source,
+    fpe.utm_medium,
+    fpe.utm_campaign,
+    fpe.utm_term,
+    fpe.utm_content,
+    row_number() OVER (PARTITION BY fpe.session_id ORDER BY fpe.timestamp ASC) AS event_order
+FROM user_filter AS ud
+INNER JOIN filtered_page_events AS fpe ON (fpe.device_id = ud.device_id) AND (fpe.product_id = ud.product_id) AND (fpe.environment_id = ud.environment_id)
+WHERE fpe.timestamp < ud.signup_timestamp
+
+
+
+5. CREATE MATERIALIZED VIEW default.mv_touchpoint_groups TO default.temp_touchpoint_groups
+(
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `user_email` String,
+    `session_id` String,
+    `timestamp` DateTime,
+    `utm_signature` String,
+    `utm_source` String,
+    `utm_medium` String,
+    `utm_campaign` String,
+    `utm_term` String,
+    `utm_content` String,
+    `event_order` UInt32,
+    `rn` UInt64,
+    `clean_utm_signature` String,
+    `has_explicit_utm` UInt8,
+    `last_explicit_utm` String,
+    `utm_state` String,
+    `effective_touchpoint_signature` String,
+    `prev_utm_state` String,
+    `prev_touchpoint_signature` String,
+    `is_new_touchpoint` UInt8
+)
+AS WITH
+    touchpoint_preparation AS
+    (
+        SELECT
+            user_id,
+            signup_timestamp,
+            user_email,
+            session_id,
+            timestamp,
+            utm_signature,
+            utm_source,
+            utm_medium,
+            utm_campaign,
+            utm_term,
+            utm_content,
+            event_order,
+            row_number() OVER (PARTITION BY session_id ORDER BY timestamp ASC) AS rn,
+            multiIf((utm_signature != '') AND (utm_signature != 'null||||') AND (utm_signature != '||||'), utm_signature, '') AS clean_utm_signature,
+            multiIf((utm_signature != '') AND (utm_signature != 'null||||') AND (utm_signature != '||||'), 1, 0) AS has_explicit_utm
+        FROM default.temp_marketing_events_ordered
+    ),
+    touchpoint_with_effective AS
+    (
+        SELECT
+            *,
+            argMax(clean_utm_signature, if(has_explicit_utm = 1, timestamp, toDateTime('1970-01-01 00:00:00'))) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS last_explicit_utm,
+            multiIf(has_explicit_utm = 1, 'explicit', argMax(clean_utm_signature, if(has_explicit_utm = 1, timestamp, toDateTime('1970-01-01 00:00:00'))) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) != '', 'inherited', 'direct') AS utm_state
+        FROM touchpoint_preparation
+    )
+SELECT
+    *,
+    coalesce(last_explicit_utm, 'direct') AS effective_touchpoint_signature,
+    anyLast(utm_state) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING) AS prev_utm_state,
+    anyLast(coalesce(last_explicit_utm, 'direct')) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING) AS prev_touchpoint_signature,
+    multiIf(rn = 1, 1, coalesce(last_explicit_utm, 'direct') != coalesce(prev_touchpoint_signature, 'different'), 1, (utm_state = 'explicit') AND (prev_utm_state = 'inherited'), 1, 0) AS is_new_touchpoint
+FROM touchpoint_with_effective
+
+
+
+6. CREATE MATERIALIZED VIEW default.mv_session_touchpoints TO default.temp_session_touchpoints
+(
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `user_email` String,
+    `session_id` String,
+    `touchpoint_group` UInt64,
+    `touchpoint_start` DateTime,
+    `touchpoint_end` DateTime,
+    `visit_count` UInt64,
+    `touchpoint_id` String
+)
+AS WITH touchpoint_numbered AS
+    (
+        SELECT
+            user_id,
+            signup_timestamp,
+            user_email,
+            session_id,
+            timestamp,
+            utm_signature,
+            utm_source,
+            utm_medium,
+            utm_campaign,
+            utm_term,
+            utm_content,
+            event_order,
+            effective_touchpoint_signature,
+            sum(is_new_touchpoint) OVER (PARTITION BY session_id ORDER BY timestamp ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS touchpoint_group
+        FROM default.temp_touchpoint_groups
+    )
+SELECT
+    user_id,
+    signup_timestamp,
+    user_email,
+    session_id,
+    touchpoint_group,
+    min(timestamp) AS touchpoint_start,
+    max(timestamp) AS touchpoint_end,
+    count() AS visit_count,
+    effective_touchpoint_signature AS touchpoint_id
+FROM touchpoint_numbered
+GROUP BY
+    user_id,
+    signup_timestamp,
+    user_email,
+    session_id,
+    touchpoint_group,
+    effective_touchpoint_signature
+
+
+
+7. CREATE MATERIALIZED VIEW default.mv_user_touchpoints TO default.temp_user_touchpoints
+(
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `user_email` String,
+    `total_touchpoints` UInt32,
+    `first_marketing_event` Nullable(DateTime)
+)
+AS SELECT
+    user_id,
+    signup_timestamp,
+    user_email,
+    CAST(countDistinct(concat(session_id, '|', toString(touchpoint_group))), 'UInt32') AS total_touchpoints,
+    multiIf((count(touchpoint_start) > 0) AND (min(touchpoint_start) != toDateTime('1970-01-01 00:00:00')), min(touchpoint_start), NULL) AS first_marketing_event
+FROM default.temp_session_touchpoints
+GROUP BY
+    user_id,
+    signup_timestamp,
+    user_email
+
+
+
+8. CREATE MATERIALIZED VIEW default.mv_user_conversion_metrics TO default.user_conversion_metrics_table
+(
+    `product_id` String,
+    `environment_id` String,
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `final_touchpoint_count` UInt32,
+    `time_to_signup_days` UInt32,
+    `active_days` UInt32,
+    `first_marketing_event` Nullable(DateTime),
+    `total_marketing_touchpoints` UInt32,
+    `user_email` String,
+    `has_marketing_activity` UInt8,
+    `total_page_visits` Int32,
+    `total_sessions` Int32
+)
+AS SELECT
+    se.product_id AS product_id,
+    se.environment_id AS environment_id,
+    se.user_id AS user_id,
+    se.signup_timestamp AS signup_timestamp,
+    CAST(multiIf((ut.total_touchpoints IS NOT NULL) AND (ut.total_touchpoints > 0), least(ut.total_touchpoints + 1, 1000), 1), 'UInt32') AS final_touchpoint_count,
+    CAST(multiIf((ut.first_marketing_event IS NOT NULL) AND (ut.first_marketing_event != toDateTime('1970-01-01 00:00:00')), greatest(0, least(dateDiff('day', ut.first_marketing_event, se.signup_timestamp), 1000)), 0), 'UInt32') AS time_to_signup_days,
+    coalesce(uad.active_days, 1) AS active_days,
+    multiIf((ut.first_marketing_event IS NOT NULL) AND (ut.first_marketing_event != toDateTime('1970-01-01 00:00:00')), ut.first_marketing_event, NULL) AS first_marketing_event,
+    coalesce(ut.total_touchpoints, 0) AS total_marketing_touchpoints,
+    se.user_email AS user_email,
+    multiIf(ut.total_touchpoints > 0, 1, 0) AS has_marketing_activity,
+    CAST(coalesce(upv.total_page_visits, 0), 'Int32') AS total_page_visits,
+    CAST(coalesce(upv.total_sessions, 0), 'Int32') AS total_sessions
+FROM default.temp_user_touchpoints AS ut
+RIGHT JOIN default.temp_signup_user_devices AS se ON se.user_id = ut.user_id
+LEFT JOIN default.temp_user_active_days AS uad ON se.user_id = uad.user_id
+LEFT JOIN default.temp_user_page_visits_sessions AS upv ON se.user_id = upv.user_id
