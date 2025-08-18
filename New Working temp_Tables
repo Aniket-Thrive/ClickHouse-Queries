@@ -1,0 +1,133 @@
+1. CREATE TABLE default.temp_signup_user_devices
+(
+    `product_id` String,
+    `environment_id` String,
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `user_email` String,
+    `device_id` String
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ORDER BY (user_id, product_id, environment_id)
+SETTINGS index_granularity = 8192
+
+
+2. CREATE TABLE default.temp_user_page_visits_sessions
+(
+    `user_id` String,
+    `total_page_visits` UInt64,
+    `total_sessions` UInt64
+)
+ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ORDER BY user_id
+SETTINGS index_granularity = 8192
+
+3. CREATE TABLE default.temp_user_active_days
+(
+    `user_id` String,
+    `active_days` UInt32
+)
+ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ORDER BY user_id
+SETTINGS index_granularity = 8192
+
+
+4. CREATE TABLE default.temp_marketing_events_ordered
+(
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `user_email` String,
+    `session_id` String,
+    `timestamp` DateTime,
+    `utm_signature` String,
+    `utm_source` String,
+    `utm_medium` String,
+    `utm_campaign` String,
+    `utm_term` String,
+    `utm_content` String,
+    `event_order` UInt32
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ORDER BY (user_id, session_id, timestamp)
+SETTINGS index_granularity = 8192
+
+
+5. CREATE TABLE default.temp_touchpoint_groups
+(
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `user_email` String,
+    `session_id` String,
+    `timestamp` DateTime,
+    `utm_signature` String,
+    `utm_source` String,
+    `utm_medium` String,
+    `utm_campaign` String,
+    `utm_term` String,
+    `utm_content` String,
+    `event_order` UInt32,
+    `rn` UInt32,
+    `clean_utm_signature` String,
+    `has_explicit_utm` UInt8,
+    `last_explicit_utm` String,
+    `utm_state` String,
+    `effective_touchpoint_signature` String,
+    `is_new_touchpoint` UInt8
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ORDER BY (user_id, session_id, timestamp)
+SETTINGS index_granularity = 8192
+
+
+6. CREATE TABLE default.temp_session_touchpoints
+(
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `user_email` String,
+    `session_id` String,
+    `touchpoint_group` UInt32,
+    `touchpoint_start` DateTime,
+    `touchpoint_end` DateTime,
+    `visit_count` UInt64,
+    `touchpoint_id` String
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ORDER BY (user_id, session_id, touchpoint_group)
+SETTINGS index_granularity = 8192
+
+
+
+7. CREATE TABLE default.temp_user_touchpoints
+(
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `user_email` String,
+    `total_touchpoints` UInt32,
+    `first_marketing_event` Nullable(DateTime)
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ORDER BY (user_id, signup_timestamp)
+SETTINGS index_granularity = 8192
+
+
+
+8.  CREATE TABLE default.user_conversion_metrics_table
+(
+    `product_id` String,
+    `environment_id` String,
+    `user_id` String,
+    `signup_timestamp` DateTime,
+    `final_touchpoint_count` UInt32,
+    `time_to_signup_days` UInt32,
+    `active_days` UInt32,
+    `first_marketing_event` Nullable(DateTime),
+    `total_marketing_touchpoints` UInt32,
+    `user_email` String,
+    `has_marketing_activity` UInt8,
+    `total_page_visits` Int32 DEFAULT 0,
+    `total_sessions` Int32 DEFAULT 0
+)
+ENGINE = SharedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+PARTITION BY toYYYYMM(signup_timestamp)
+ORDER BY (product_id, environment_id, user_id)
+SETTINGS index_granularity = 8192
