@@ -72,6 +72,8 @@ SETTINGS index_granularity = 8192
     `last_explicit_utm` String,
     `utm_state` String,
     `effective_touchpoint_signature` String,
+    `prev_utm_state` String,
+    `prev_touchpoint_signature` String,
     `is_new_touchpoint` UInt8
 )
 ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
