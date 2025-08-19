@@ -82,33 +82,23 @@ GROUP BY ud.user_id
 
 
 
-3. CREATE MATERIALIZED VIEW default.mv_user_active_days TO default.temp_user_active_days
+3. CREATE MATERIALIZED VIEW default.mv_user_active_days
+TO default.temp_user_active_days
 (
     `user_id` String,
     `active_days` UInt64
 )
-AS WITH
-    user_filter AS
-    (
-        SELECT DISTINCT
-            user_id,
-            product_id,
-            environment_id,
-            device_id,
-            signup_timestamp
-        FROM default.temp_signup_user_devices
-        WHERE device_id != ''
-    ),
-    filtered_page_events AS
-    (
-        SELECT
-            pe.device_id,
-            pe.product_id,
-            pe.environment_id,
-            pe.timestamp
-        FROM default.page_events AS pe
-        WHERE pe.source LIKE '%marketing%'
-    )
+AS
+WITH filtered_page_events AS
+(
+    SELECT
+        pe.device_id,
+        pe.product_id,
+        pe.environment_id,
+        pe.timestamp
+    FROM default.page_events AS pe
+    WHERE pe.source LIKE '%marketing%'
+)
 SELECT
     user_id,
     countDistinct(toDate(timestamp)) AS active_days
@@ -117,20 +107,27 @@ FROM
     SELECT
         ud.user_id,
         fpe.timestamp
-    FROM user_filter AS ud
-    INNER JOIN filtered_page_events AS fpe ON (fpe.device_id = ud.device_id) AND (fpe.product_id = ud.product_id) AND (fpe.environment_id = ud.environment_id)
-    WHERE fpe.timestamp <= ud.signup_timestamp
+    FROM default.temp_signup_user_devices AS ud
+    INNER JOIN filtered_page_events AS fpe
+        ON fpe.device_id = ud.device_id
+       AND fpe.product_id = ud.product_id
+       AND fpe.environment_id = ud.environment_id
+    WHERE (ud.device_id != '') AND (fpe.timestamp <= ud.signup_timestamp)
+ 
     UNION DISTINCT
+ 
     SELECT
         ud.user_id,
         ud.signup_timestamp AS timestamp
-    FROM user_filter AS ud
+    FROM default.temp_signup_user_devices AS ud
+    WHERE ud.device_id != ''
 ) AS all_user_events
-GROUP BY user_id
+GROUP BY user_id;
 
 
 
-4. CREATE MATERIALIZED VIEW default.mv_marketing_events_ordered TO default.temp_marketing_events_ordered
+4. CREATE MATERIALIZED VIEW default.mv_marketing_events_ordered
+TO default.temp_marketing_events_ordered
 (
     `user_id` String,
     `signup_timestamp` DateTime,
@@ -145,51 +142,49 @@ GROUP BY user_id
     `utm_content` String,
     `event_order` UInt64
 )
-AS WITH
-    user_filter AS
-    (
-        SELECT DISTINCT
-            user_id,
-            product_id,
-            environment_id,
-            device_id,
-            signup_timestamp,
-            user_email
-        FROM default.temp_signup_user_devices
-        WHERE device_id != ''
-    ),
-    filtered_page_events AS
-    (
-        SELECT
-            pe.device_id,
-            pe.product_id,
-            pe.environment_id,
-            pe.session_id,
-            pe.timestamp,
-            pe.utm_source,
-            pe.utm_medium,
-            pe.utm_campaign,
-            pe.utm_term,
-            pe.utm_content
-        FROM default.page_events AS pe
-        WHERE (pe.source LIKE '%marketing%') AND (pe.session_id != '')
-    )
+AS
+WITH filtered_page_events AS
+(
+    SELECT
+        pe.device_id,
+        pe.product_id,
+        pe.environment_id,
+        pe.session_id,
+        pe.timestamp,
+        pe.utm_source,
+        pe.utm_medium,
+        pe.utm_campaign,
+        pe.utm_term,
+        pe.utm_content
+    FROM default.page_events AS pe
+    WHERE (pe.source LIKE '%marketing%') AND (pe.session_id != '')
+)
 SELECT
     ud.user_id,
     ud.signup_timestamp,
     ud.user_email,
     fpe.session_id,
     fpe.timestamp,
-    concat(coalesce(fpe.utm_source, ''), '|', coalesce(fpe.utm_medium, ''), '|', coalesce(fpe.utm_campaign, ''), '|', coalesce(fpe.utm_term, ''), '|', coalesce(fpe.utm_content, '')) AS utm_signature,
+    concat(
+        coalesce(fpe.utm_source, ''), '|',
+        coalesce(fpe.utm_medium, ''), '|',
+        coalesce(fpe.utm_campaign, ''), '|',
+        coalesce(fpe.utm_term, ''), '|',
+        coalesce(fpe.utm_content, '')
+    ) AS utm_signature,
     fpe.utm_source,
     fpe.utm_medium,
     fpe.utm_campaign,
     fpe.utm_term,
     fpe.utm_content,
     row_number() OVER (PARTITION BY fpe.session_id ORDER BY fpe.timestamp ASC) AS event_order
-FROM user_filter AS ud
-INNER JOIN filtered_page_events AS fpe ON (fpe.device_id = ud.device_id) AND (fpe.product_id = ud.product_id) AND (fpe.environment_id = ud.environment_id)
-WHERE fpe.timestamp < ud.signup_timestamp
+FROM default.temp_signup_user_devices AS ud
+INNER JOIN filtered_page_events AS fpe
+    ON fpe.device_id = ud.device_id
+   AND fpe.product_id = ud.product_id
+   AND fpe.environment_id = ud.environment_id
+WHERE (ud.device_id != '') AND (fpe.timestamp < ud.signup_timestamp);
+
 
 
 
@@ -351,16 +346,32 @@ AS SELECT
     se.environment_id AS environment_id,
     se.user_id AS user_id,
     se.signup_timestamp AS signup_timestamp,
-    CAST(multiIf((ut.total_touchpoints IS NOT NULL) AND (ut.total_touchpoints > 0), least(ut.total_touchpoints + 1, 1000), 1), 'UInt32') AS final_touchpoint_count,
-    CAST(multiIf((ut.first_marketing_event IS NOT NULL) AND (ut.first_marketing_event != toDateTime('1970-01-01 00:00:00')), greatest(0, least(dateDiff('day', ut.first_marketing_event, se.signup_timestamp), 1000)), 0), 'UInt32') AS time_to_signup_days,
+    CAST(least(coalesce(ut.total_touchpoints, 0) + 1, 1000), 'UInt32') AS final_touchpoint_count,
+    CAST(
+        multiIf(
+            ut.first_marketing_event IS NOT NULL
+                AND ut.first_marketing_event != toDateTime('1970-01-01 00:00:00'),
+            greatest(0, least(dateDiff('day', ut.first_marketing_event, se.signup_timestamp), 1000)),
+            0
+        ),
+        'UInt32'
+    ) AS time_to_signup_days,
     coalesce(uad.active_days, 1) AS active_days,
-    multiIf((ut.first_marketing_event IS NOT NULL) AND (ut.first_marketing_event != toDateTime('1970-01-01 00:00:00')), ut.first_marketing_event, NULL) AS first_marketing_event,
+    multiIf(
+        ut.first_marketing_event IS NOT NULL
+            AND ut.first_marketing_event != toDateTime('1970-01-01 00:00:00'),
+        ut.first_marketing_event,
+        NULL
+    ) AS first_marketing_event,
     coalesce(ut.total_touchpoints, 0) AS total_marketing_touchpoints,
     se.user_email AS user_email,
-    multiIf(ut.total_touchpoints > 0, 1, 0) AS has_marketing_activity,
+    multiIf(coalesce(ut.total_touchpoints, 0) > 0, 1, 0) AS has_marketing_activity,
     CAST(coalesce(upv.total_page_visits, 0), 'Int32') AS total_page_visits,
     CAST(coalesce(upv.total_sessions, 0), 'Int32') AS total_sessions
 FROM default.temp_user_touchpoints AS ut
-RIGHT JOIN default.temp_signup_user_devices AS se ON se.user_id = ut.user_id
-LEFT JOIN default.temp_user_active_days AS uad ON se.user_id = uad.user_id
-LEFT JOIN default.temp_user_page_visits_sessions AS upv ON se.user_id = upv.user_id
+RIGHT JOIN default.temp_signup_user_devices AS se
+       ON se.user_id = ut.user_id
+LEFT JOIN default.temp_user_active_days AS uad
+       ON se.user_id = uad.user_id
+LEFT JOIN default.temp_user_page_visits_sessions AS upv
+       ON se.user_id = upv.user_id
