@@ -1,38 +1,42 @@
 1. CREATE TABLE default.temp_signup_user_devices
 (
-    `product_id` String,
-    `environment_id` String,
-    `user_id` String,
-    `signup_timestamp` DateTime,
-    `user_email` String,
-    `device_id` String
+    product_id String,
+    environment_id String,
+    user_id String,
+    signup_timestamp DateTime,
+    user_email String,
+    device_id String
 )
-ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
-ORDER BY (user_id, product_id, environment_id)
-SETTINGS index_granularity = 8192
+ENGINE = ReplicatedMergeTree
+ORDER BY (product_id, environment_id, user_id);
 
 
-2. CREATE TABLE default.temp_user_page_visits_sessions
+
+-- 2. User page visits + sessions
+CREATE TABLE default.temp_user_page_visits_sessions
 (
     `user_id` String,
     `total_page_visits` UInt64,
     `total_sessions` UInt64
 )
-ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ENGINE = SummingMergeTree
 ORDER BY user_id
-SETTINGS index_granularity = 8192
+SETTINGS index_granularity = 8192;
 
-3. CREATE TABLE default.temp_user_active_days
+
+-- 3. Active days
+CREATE TABLE default.temp_user_active_days
 (
     `user_id` String,
     `active_days` UInt32
 )
-ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ENGINE = SummingMergeTree
 ORDER BY user_id
-SETTINGS index_granularity = 8192
+SETTINGS index_granularity = 8192;
 
 
-4. CREATE TABLE default.temp_marketing_events_ordered
+-- 4. Marketing events ordered
+CREATE TABLE default.temp_marketing_events_ordered
 (
     `user_id` String,
     `signup_timestamp` DateTime,
@@ -47,12 +51,13 @@ SETTINGS index_granularity = 8192
     `utm_content` String,
     `event_order` UInt32
 )
-ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ENGINE = MergeTree
 ORDER BY (user_id, session_id, timestamp)
-SETTINGS index_granularity = 8192
+SETTINGS index_granularity = 8192;
 
 
-5. CREATE TABLE default.temp_touchpoint_groups
+-- 5. Touchpoint groups
+CREATE TABLE default.temp_touchpoint_groups
 (
     `user_id` String,
     `signup_timestamp` DateTime,
@@ -76,12 +81,13 @@ SETTINGS index_granularity = 8192
     `prev_touchpoint_signature` String,
     `is_new_touchpoint` UInt8
 )
-ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ENGINE = MergeTree
 ORDER BY (user_id, session_id, timestamp)
-SETTINGS index_granularity = 8192
+SETTINGS index_granularity = 8192;
 
 
-6. CREATE TABLE default.temp_session_touchpoints
+-- 6. Session touchpoints
+CREATE TABLE default.temp_session_touchpoints
 (
     `user_id` String,
     `signup_timestamp` DateTime,
@@ -93,13 +99,13 @@ SETTINGS index_granularity = 8192
     `visit_count` UInt64,
     `touchpoint_id` String
 )
-ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ENGINE = MergeTree
 ORDER BY (user_id, session_id, touchpoint_group)
-SETTINGS index_granularity = 8192
+SETTINGS index_granularity = 8192;
 
 
-
-7. CREATE TABLE default.temp_user_touchpoints
+-- 7. User touchpoints
+CREATE TABLE default.temp_user_touchpoints
 (
     `user_id` String,
     `signup_timestamp` DateTime,
@@ -107,13 +113,13 @@ SETTINGS index_granularity = 8192
     `total_touchpoints` UInt32,
     `first_marketing_event` Nullable(DateTime)
 )
-ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ENGINE = MergeTree
 ORDER BY (user_id, signup_timestamp)
-SETTINGS index_granularity = 8192
+SETTINGS index_granularity = 8192;
 
 
-
-8.  CREATE TABLE default.user_conversion_metrics_table
+-- 8. User conversion metrics
+CREATE TABLE default.user_conversion_metrics_table
 (
     `product_id` String,
     `environment_id` String,
@@ -129,7 +135,7 @@ SETTINGS index_granularity = 8192
     `total_page_visits` Int32 DEFAULT 0,
     `total_sessions` Int32 DEFAULT 0
 )
-ENGINE = SharedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(signup_timestamp)
 ORDER BY (product_id, environment_id, user_id)
-SETTINGS index_granularity = 8192
+SETTINGS index_granularity = 8192;
