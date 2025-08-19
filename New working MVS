@@ -97,6 +97,7 @@ AS WITH
             device_id,
             signup_timestamp
         FROM default.temp_signup_user_devices
+        WHERE device_id != ''
     ),
     filtered_page_events AS
     (
@@ -155,6 +156,7 @@ AS WITH
             signup_timestamp,
             user_email
         FROM default.temp_signup_user_devices
+        WHERE device_id != ''
     ),
     filtered_page_events AS
     (
