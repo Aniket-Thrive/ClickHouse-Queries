@@ -7,7 +7,6 @@
     user_email String,
     device_id String
 )
-ENGINE = ReplicatedMergeTree
 ORDER BY (product_id, environment_id, user_id);
 
 
@@ -19,7 +18,6 @@ CREATE TABLE default.temp_user_page_visits_sessions
     `total_page_visits` UInt64,
     `total_sessions` UInt64
 )
-ENGINE = SummingMergeTree
 ORDER BY user_id
 SETTINGS index_granularity = 8192;
 
@@ -30,7 +28,6 @@ CREATE TABLE default.temp_user_active_days
     `user_id` String,
     `active_days` UInt32
 )
-ENGINE = SummingMergeTree
 ORDER BY user_id
 SETTINGS index_granularity = 8192;
 
@@ -51,7 +48,6 @@ CREATE TABLE default.temp_marketing_events_ordered
     `utm_content` String,
     `event_order` UInt32
 )
-ENGINE = MergeTree
 ORDER BY (user_id, session_id, timestamp)
 SETTINGS index_granularity = 8192;
 
@@ -81,7 +77,6 @@ CREATE TABLE default.temp_touchpoint_groups
     `prev_touchpoint_signature` String,
     `is_new_touchpoint` UInt8
 )
-ENGINE = MergeTree
 ORDER BY (user_id, session_id, timestamp)
 SETTINGS index_granularity = 8192;
 
@@ -99,7 +94,6 @@ CREATE TABLE default.temp_session_touchpoints
     `visit_count` UInt64,
     `touchpoint_id` String
 )
-ENGINE = MergeTree
 ORDER BY (user_id, session_id, touchpoint_group)
 SETTINGS index_granularity = 8192;
 
@@ -113,7 +107,6 @@ CREATE TABLE default.temp_user_touchpoints
     `total_touchpoints` UInt32,
     `first_marketing_event` Nullable(DateTime)
 )
-ENGINE = MergeTree
 ORDER BY (user_id, signup_timestamp)
 SETTINGS index_granularity = 8192;
 
@@ -135,7 +128,6 @@ CREATE TABLE default.user_conversion_metrics_table
     `total_page_visits` Int32 DEFAULT 0,
     `total_sessions` Int32 DEFAULT 0
 )
-ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(signup_timestamp)
 ORDER BY (product_id, environment_id, user_id)
 SETTINGS index_granularity = 8192;
