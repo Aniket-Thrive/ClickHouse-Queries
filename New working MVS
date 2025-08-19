@@ -44,23 +44,11 @@ LEFT JOIN filtered_page_events AS pe ON (pe.user_id = se.user_id) AND (pe.produc
 
 2. CREATE MATERIALIZED VIEW default.mv_user_page_visits_sessions TO default.temp_user_page_visits_sessions
 (
-    `user_id` String,
-    `total_page_visits` UInt64,
-    `total_sessions` UInt64
+    user_id String,
+    total_page_visits UInt64,
+    total_sessions UInt64
 )
-AS WITH
-    user_filter AS
-    (
-        SELECT DISTINCT
-            user_id,
-            product_id,
-            environment_id,
-            device_id,
-            signup_timestamp
-        FROM default.temp_signup_user_devices
-        WHERE (device_id != '')
-    ),
-    filtered_page_events AS
+AS WITH filtered_page_events AS
     (
         SELECT
             pe.device_id,
@@ -75,9 +63,9 @@ SELECT
     ud.user_id,
     count() AS total_page_visits,
     countDistinct(fpe.session_id) AS total_sessions
-FROM user_filter AS ud
+FROM default.temp_signup_user_devices AS ud
 INNER JOIN filtered_page_events AS fpe ON (fpe.device_id = ud.device_id) AND (fpe.product_id = ud.product_id) AND (fpe.environment_id = ud.environment_id)
-WHERE fpe.timestamp <= ud.signup_timestamp
+WHERE (ud.device_id != '') AND (fpe.timestamp <= ud.signup_timestamp)
 GROUP BY ud.user_id
 
 
