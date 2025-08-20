@@ -1,4 +1,4 @@
-1. CREATE TABLE default.temp_signup_user_devices
+1. CREATE TABLE default.ua_signup_user_devices
 (
     product_id String,
     environment_id String,
@@ -12,7 +12,7 @@ ORDER BY (product_id, environment_id, user_id);
 
 
 -- 2. User page visits + sessions
-CREATE TABLE default.temp_user_page_visits_sessions
+CREATE TABLE default.ua_user_page_visits_sessions
 (
     `user_id` String,
     `total_page_visits` UInt64,
@@ -23,7 +23,7 @@ SETTINGS index_granularity = 8192;
 
 
 -- 3. Active days
-CREATE TABLE default.temp_user_active_days
+CREATE TABLE default.ua_user_active_days
 (
     `user_id` String,
     `active_days` UInt32
@@ -33,7 +33,7 @@ SETTINGS index_granularity = 8192;
 
 
 -- 4. Marketing events ordered
-CREATE TABLE default.temp_marketing_events_ordered
+CREATE TABLE default.ua_marketing_events_ordered
 (
     `user_id` String,
     `signup_timestamp` DateTime,
@@ -53,7 +53,7 @@ SETTINGS index_granularity = 8192;
 
 
 -- 5. Touchpoint groups
-CREATE TABLE default.temp_touchpoint_groups
+CREATE TABLE default.ua_touchpoint_groups
 (
     `user_id` String,
     `signup_timestamp` DateTime,
@@ -82,7 +82,7 @@ SETTINGS index_granularity = 8192;
 
 
 -- 6. Session touchpoints
-CREATE TABLE default.temp_session_touchpoints
+CREATE TABLE default.ua_session_touchpoints
 (
     `user_id` String,
     `signup_timestamp` DateTime,
@@ -99,7 +99,7 @@ SETTINGS index_granularity = 8192;
 
 
 -- 7. User touchpoints
-CREATE TABLE default.temp_user_touchpoints
+CREATE TABLE default.ua_user_touchpoints
 (
     `user_id` String,
     `signup_timestamp` DateTime,
