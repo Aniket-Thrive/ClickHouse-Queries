@@ -1,6 +1,6 @@
 New MVS-
 
-1.CREATE MATERIALIZED VIEW default.mv_signup_user_devices TO default.temp_signup_user_devices
+1.CREATE MATERIALIZED VIEW default.signup_user_devices_mv TO default.ua_signup_user_devices
 (
     `product_id` String,
     `environment_id` String,
@@ -42,7 +42,7 @@ FROM signup_event AS se
 LEFT JOIN filtered_page_events AS pe ON (pe.user_id = se.user_id) AND (pe.product_id = se.product_id) AND (pe.environment_id = se.environment_id)
 
 
-2. CREATE MATERIALIZED VIEW default.mv_user_page_visits_sessions TO default.temp_user_page_visits_sessions
+2. CREATE MATERIALIZED VIEW default.user_page_visits_sessions_mv TO default.ua_user_page_visits_sessions
 (
     user_id String,
     total_page_visits UInt64,
@@ -63,7 +63,7 @@ SELECT
     ud.user_id,
     count() AS total_page_visits,
     countDistinct(fpe.session_id) AS total_sessions
-FROM default.temp_signup_user_devices AS ud
+FROM default.ua_signup_user_devices AS ud
 INNER JOIN filtered_page_events AS fpe ON (fpe.device_id = ud.device_id) AND (fpe.product_id = ud.product_id) AND (fpe.environment_id = ud.environment_id)
 WHERE (ud.device_id != '') AND (fpe.timestamp <= ud.signup_timestamp)
 GROUP BY ud.user_id
